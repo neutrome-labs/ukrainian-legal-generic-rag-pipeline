@@ -8,7 +8,6 @@ from .config import (
     PipelineConfig,
     R2Config,
     RadaAPIConfig,
-    ChunkingConfig,
     FolderStructure,
     load_config,
 )
@@ -17,8 +16,7 @@ from .rada_api_client import RadaAPIClient, LawDocument
 
 from .markdown_converter import (
     MarkdownConverter,
-    ConstitutionProcessor,
-    DocumentChunk,
+    LegalDocument,
 )
 
 from .r2_uploader import (
@@ -35,7 +33,6 @@ __all__ = [
     'PipelineConfig',
     'R2Config',
     'RadaAPIConfig',
-    'ChunkingConfig',
     'FolderStructure',
     'load_config',
     # API Client
@@ -43,8 +40,7 @@ __all__ = [
     'LawDocument',
     # Markdown Converter
     'MarkdownConverter',
-    'ConstitutionProcessor',
-    'DocumentChunk',
+    'LegalDocument',
     # R2 Uploader
     'R2Uploader',
     'LocalStorage',

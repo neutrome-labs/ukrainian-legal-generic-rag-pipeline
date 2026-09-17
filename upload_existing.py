@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
 """
-Upload existing local markdown files to R2
-Reuses already downloaded and processed chunks without re-fetching from API
+Upload existing local Markdown documents to R2.
+Each Markdown file is a complete source document for Cloudflare AI Search.
 """
 
 import argparse
@@ -28,14 +27,14 @@ def upload_file(uploader: R2Uploader, local_path: Path, r2_key: str) -> UploadRe
     try:
         with open(local_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        
+
         result = uploader.client.put_object(
             Bucket=uploader.config.bucket_name,
             Key=r2_key,
             Body=content.encode('utf-8'),
             ContentType='text/markdown; charset=utf-8'
         )
-        
+
         return UploadResult(
             success=True,
             key=r2_key,
@@ -62,7 +61,7 @@ def upload_directory(
     """
     # Collect all files to upload
     files_to_upload: List[Tuple[Path, str]] = []
-    
+
     for root, dirs, files in os.walk(local_dir):
         for filename in files:
             local_path = Path(root) / filename
@@ -70,10 +69,10 @@ def upload_directory(
             rel_path = local_path.relative_to(local_dir)
             r2_key = str(rel_path)
             files_to_upload.append((local_path, r2_key))
-    
+
     total = len(files_to_upload)
     logger.info(f"Found {total} files to upload")
-    
+
     if dry_run:
         logger.info("DRY RUN - no files will be uploaded")
         for local_path, r2_key in files_to_upload[:10]:
@@ -81,11 +80,11 @@ def upload_directory(
         if total > 10:
             logger.info(f"  ... and {total - 10} more files")
         return total, 0, 0
-    
+
     uploaded = 0
     skipped = 0
     failed = 0
-    
+
     # Check what already exists in R2
     logger.info("Checking existing files in R2...")
     existing_keys = set()
@@ -97,27 +96,27 @@ def upload_directory(
         logger.info(f"Found {len(existing_keys)} existing files in R2")
     except Exception as e:
         logger.warning(f"Could not list existing files: {e}")
-    
+
     # Filter out already uploaded files
     files_to_upload_new = [(lp, k) for lp, k in files_to_upload if k not in existing_keys]
     skipped = len(files_to_upload) - len(files_to_upload_new)
-    
+
     if skipped > 0:
         logger.info(f"Skipping {skipped} files that already exist in R2")
-    
+
     if not files_to_upload_new:
         logger.info("All files already uploaded!")
         return 0, skipped, 0
-    
+
     logger.info(f"Uploading {len(files_to_upload_new)} new files...")
-    
+
     # Upload in parallel
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(upload_file, uploader, local_path, r2_key): (local_path, r2_key)
             for local_path, r2_key in files_to_upload_new
         }
-        
+
         for i, future in enumerate(as_completed(futures), 1):
             local_path, r2_key = futures[future]
             try:
@@ -132,22 +131,8 @@ def upload_directory(
             except Exception as e:
                 failed += 1
                 logger.error(f"Error uploading {r2_key}: {e}")
-    
+
     return uploaded, skipped, failed
-
-
-def upload_index(uploader: R2Uploader, local_dir: Path) -> bool:
-    """Upload index.json if it exists"""
-    index_path = local_dir / "index.json"
-    if index_path.exists():
-        logger.info("Uploading index.json...")
-        result = upload_file(uploader, index_path, "index.json")
-        if result.success:
-            logger.info("Index uploaded successfully")
-            return True
-        else:
-            logger.error(f"Failed to upload index: {result.error}")
-    return False
 
 
 def main():
@@ -177,14 +162,14 @@ def main():
         default=True,
         help="Skip files that already exist in R2 (default: True)"
     )
-    
+
     args = parser.parse_args()
-    
+
     input_dir = Path(args.input_dir)
     if not input_dir.exists():
         logger.error(f"Input directory not found: {input_dir}")
         sys.exit(1)
-    
+
     # Initialize R2 uploader
     try:
         config = load_config()
@@ -193,7 +178,7 @@ def main():
     except Exception as e:
         logger.error(f"Failed to initialize R2 uploader: {e}")
         sys.exit(1)
-    
+
     # Upload all files
     uploaded, skipped, failed = upload_directory(
         uploader,
@@ -201,11 +186,7 @@ def main():
         max_workers=args.workers,
         dry_run=args.dry_run
     )
-    
-    # Upload index if exists
-    if not args.dry_run:
-        upload_index(uploader, input_dir)
-    
+
     # Summary
     logger.info("=" * 60)
     logger.info("Upload Complete!")
@@ -213,7 +194,7 @@ def main():
     logger.info(f"  Skipped (already exists): {skipped}")
     logger.info(f"  Failed: {failed}")
     logger.info("=" * 60)
-    
+
     if failed > 0:
         sys.exit(1)
 
