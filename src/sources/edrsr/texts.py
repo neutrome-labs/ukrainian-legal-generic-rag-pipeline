@@ -1,6 +1,7 @@
 """Bounded, cached downloads from the official open-data file host."""
 
 import hashlib
+import logging
 import os
 import re
 import tempfile
@@ -13,12 +14,15 @@ import requests
 from bs4 import BeautifulSoup
 from striprtf.striprtf import rtf_to_text
 
+logger = logging.getLogger(__name__)
+
 _CHARSETS = {"windows-1251": "cp1251", "cp1251": "cp1251", "utf-8": "utf-8", "utf8": "utf-8"}
-_DECLARED = re.compile(rb"charset=([A-Za-z0-9_-]+)")
+_META = re.compile(rb"<meta\b[^>]*>", re.IGNORECASE)
+_DECLARED = re.compile(rb"\bcharset\s*=\s*[\"']?\s*([A-Za-z0-9_-]+)", re.IGNORECASE)
 
 
 class DecisionTextLoader:
-    def __init__(self, cache_dir: str | Path, delay: float = 6.0, offline: bool = False):
+    def __init__(self, cache_dir: str | Path, delay: float = 5.0, offline: bool = False):
         if delay < 0:
             raise ValueError("delay must be non-negative")
         self.cache_dir = Path(cache_dir)
@@ -45,6 +49,7 @@ class DecisionTextLoader:
         key = hashlib.sha256(url.encode()).hexdigest()
         path = self.cache_dir / key[:2] / f"{key}.{kind}"
         if path.exists():
+            logger.info("Reading cached text: %s", url)
             if path.stat().st_size > self.max_bytes:
                 raise ValueError(f"Cached document exceeds size limit: {path}")
             data = path.read_bytes()
@@ -52,7 +57,11 @@ class DecisionTextLoader:
             raise ValueError(f"Document not cached for {url}; run without --offline to download")
         else:
             if self.last_request is not None:
-                time.sleep(max(0, self.delay - (time.monotonic() - self.last_request)))
+                wait = max(0, self.delay - (time.monotonic() - self.last_request))
+                if wait:
+                    logger.info("Waiting %.1fs before next download", wait)
+                time.sleep(wait)
+            logger.info("Downloading text: %s", url)
             self.last_request = time.monotonic()
             # No automatic retries/redirects: stop on access restrictions or rate limits.
             with self.session.get(url, stream=True, timeout=(10, 60), allow_redirects=False,
@@ -66,6 +75,7 @@ class DecisionTextLoader:
                     if len(data) > self.max_bytes:
                         raise ValueError(f"Document exceeds {self.max_bytes} bytes: {url}")
                 data = bytes(data)
+            logger.info("Downloaded %d bytes; converting %s", len(data), kind)
             # Validate before caching; an error page must not become a document.
             text = self.convert(data, kind)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,7 +110,15 @@ class DecisionTextLoader:
 
     @staticmethod
     def _html_to_text(data: bytes) -> str:
-        declared = _DECLARED.search(data[:2048])
+        # Legacy exports may put long author/party META fields before the
+        # charset declaration. A fixed prefix can both miss the declaration
+        # and truncate a valid label (e.g. windows-1251 -> windows-). Inspect
+        # complete META tags in the already size-bounded document instead.
+        declared = None
+        for tag in _META.finditer(data):
+            declared = _DECLARED.search(tag[0])
+            if declared:
+                break
         name = declared[1].decode("ascii", "strict").lower() if declared else "windows-1251"
         encoding = _CHARSETS.get(name)
         if encoding is None:

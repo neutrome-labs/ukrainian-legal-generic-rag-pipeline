@@ -143,6 +143,49 @@ def test_legacy_html_declared_windows_1251():
         DecisionTextLoader.convert(b"<meta charset=koi8-u><body>x</body>", "html")
 
 
+def test_html_charset_crosses_old_2048_byte_boundary(tmp_path):
+    # The old parser's data[:2048] ends at exactly "charset=windows-".
+    head = b'<html><head>'
+    declaration = b'<meta http-equiv="Content-Type" content="text/html; charset='
+    prefix = head + b' ' * (2040 - len(head) - len(declaration)) + declaration
+    data = prefix + b'windows-1251"></head><body>' + 'Ухвала суду'.encode('cp1251') + b'</body></html>'
+    assert data[:2048].endswith(b'charset=windows-')
+    assert DecisionTextLoader.convert(data, 'html') == 'Ухвала суду'
+    url = URL.removesuffix('.rtf') + '.html'
+    key = hashlib.sha256(url.encode()).hexdigest()
+    path = tmp_path / key[:2] / f'{key}.html'
+    path.parent.mkdir()
+    path.write_bytes(data)
+    loader = DecisionTextLoader(tmp_path, offline=True)
+    try:
+        assert loader.load(url) == 'Ухвала суду'
+    finally:
+        loader.close()
+
+
+@pytest.mark.parametrize('declaration', [
+    b'<META CHARSET = "UTF-8">',
+    b"<meta charset='utf-8'>",
+    b'<meta http-equiv="Content-Type" content="text/html; CHARSET = utf-8">',
+])
+def test_html_late_quoted_case_insensitive_charset(declaration):
+    data = (b'<html><head>' + b' ' * 4096 + declaration + b'</head><body>'
+            + 'Український текст'.encode('utf-8') + b'</body></html>')
+    assert DecisionTextLoader.convert(data, 'html') == 'Український текст'
+
+
+@pytest.mark.parametrize('charset', [b'koi8-u', b'windows-'])
+def test_html_late_unsupported_charset_still_rejected(charset):
+    data = b'<head>' + b' ' * 4096 + b'<meta charset="' + charset + b'"></head><body>text</body>'
+    with pytest.raises(ValueError, match='Unsupported declared charset'):
+        DecisionTextLoader.convert(data, 'html')
+
+
+def test_html_ignores_charset_text_outside_meta():
+    data = b'<html><body>charset=koi8-u is just text</body></html>'
+    assert DecisionTextLoader.convert(data, 'html') == 'charset=koi8-u is just text'
+
+
 def test_mismatched_extension_rejected(tmp_path):
     loader = DecisionTextLoader(tmp_path, offline=True)
     with pytest.raises(ValueError, match="Expected RTF"):
@@ -150,16 +193,39 @@ def test_mismatched_extension_rejected(tmp_path):
     loader.close()
 
 
-def test_download_cached_once(tmp_path):
+def test_download_cached_once(tmp_path, caplog):
     loader = DecisionTextLoader(tmp_path, delay=0)
     response = Mock(status_code=200)
     response.iter_content.return_value = [b"{\\rtf1 downloaded text}"]
     response.__enter__ = Mock(return_value=response)
     response.__exit__ = Mock(return_value=False)
     loader.session.get = Mock(return_value=response)
-    assert loader.load(URL) == "downloaded text"
-    assert loader.load(URL) == "downloaded text"
+    with caplog.at_level("INFO", logger="src.sources.edrsr.texts"):
+        assert loader.load(URL) == "downloaded text"
+        assert loader.load(URL) == "downloaded text"
+    assert f"Downloading text: {URL}" in caplog.text
+    assert "Downloaded" in caplog.text
+    assert f"Reading cached text: {URL}" in caplog.text
     loader.session.get.assert_called_once()
+    loader.close()
+
+
+def test_download_wait_is_reported(monkeypatch, tmp_path, caplog):
+    from src.sources.edrsr import texts
+    loader = DecisionTextLoader(tmp_path, delay=6)
+    loader.last_request = 10
+    monkeypatch.setattr(texts.time, "monotonic", lambda: 11)
+    sleep = Mock()
+    monkeypatch.setattr(texts.time, "sleep", sleep)
+    response = Mock(status_code=200)
+    response.iter_content.return_value = [b"{\\rtf1 downloaded text}"]
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=False)
+    loader.session.get = Mock(return_value=response)
+    with caplog.at_level("INFO", logger="src.sources.edrsr.texts"):
+        assert loader.load(URL) == "downloaded text"
+    sleep.assert_called_once_with(5)
+    assert "Waiting 5.0s before next download" in caplog.text
     loader.close()
 
 
