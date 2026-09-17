@@ -52,6 +52,52 @@ def test_zero_limit_does_not_fetch(pipeline, monkeypatch):
     fetch.assert_not_called()
 
 
+def test_independent_international_stage(pipeline, monkeypatch):
+    process = Mock(return_value=1)
+    monkeypatch.setattr(pipeline, "process_primary_acts", process)
+    constitution = Mock()
+    codes = Mock()
+    monkeypatch.setattr(pipeline, "process_constitution", constitution)
+    monkeypatch.setattr(pipeline, "process_codes", codes)
+    pipeline.run_full_pipeline(include_constitution=False, include_codes=False,
+                               include_laws=False, include_international=True)
+    constitution.assert_not_called()
+    codes.assert_not_called()
+    process.assert_called_once_with(include_international=True, limit=None, max_workers=4,
+                                    include_domestic=False, exclude_codes=True)
+
+
+def test_disabled_codes_not_reintroduced_by_primary_list(pipeline, monkeypatch):
+    from src.config import CONSTITUTION_NREG
+    code = pipeline.config.doc_types.priority_types["codes"][0]
+    monkeypatch.setattr(pipeline.api_client, "get_primary_acts_list",
+                        Mock(return_value=[CONSTITUTION_NREG, code, "123/45"]))
+    inactive = Mock(side_effect=AssertionError("inactive filtering disabled"))
+    monkeypatch.setattr(pipeline.api_client, "get_inactive_acts_list", inactive)
+    pipeline.config.process_active_laws_only = False
+    process = Mock(return_value=object())
+    monkeypatch.setattr(pipeline, "process_document", process)
+    assert pipeline.process_primary_acts(exclude_codes=True, limit=1) == 1
+    process.assert_called_once_with("123/45", doc_type="laws")
+
+
+def test_constitution_respects_skip_existing(pipeline, monkeypatch):
+    from src.config import CONSTITUTION_NREG
+    pipeline.processed_docs.add(CONSTITUTION_NREG.replace("/", "_"))
+    fetch = Mock(side_effect=AssertionError("must not fetch"))
+    monkeypatch.setattr(pipeline.api_client, "get_constitution", fetch)
+    assert pipeline.process_constitution() is None
+    assert pipeline.stats["skipped"] == 1
+
+
+def test_treaty_only_fetch_does_not_request_domestic_list(pipeline, monkeypatch):
+    fetch = Mock(return_value=Mock(content=b"treaty-id\n"))
+    monkeypatch.setattr(pipeline.api_client, "_make_request", fetch)
+    assert pipeline.api_client.get_primary_acts_list(True, False) == ["treaty-id"]
+    assert fetch.call_count == 1
+    assert fetch.call_args.args[0].endswith(pipeline.config.rada.primary_intl_list)
+
+
 def test_canonical_orchestration_import():
     from src.pipelines.rada import LegalDocumentPipeline
     from src.cli.rada import main as cli_main

@@ -4,20 +4,27 @@ import argparse
 import json
 from pathlib import Path
 
+from src.cli.common import add_boolean_argument, add_dry_run_argument
 from src.sources.edrsr.archive import download_export
 from src.sources.edrsr.catalog import EdrsrCatalog
 
 DEFAULT_EXPORTS = "exports"
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache-dir", default=None,
                         help="Root cache directory (default: ./cache/edrsr); exports go to {cache-dir}/exports/")
     parser.add_argument("--years", nargs="+", type=int, help="Restrict to specific years")
-    parser.add_argument("--download", action="store_true", help="Download/extract selected ZIPs; default is listing only")
-    parser.add_argument("--all-years", action="store_true", help="Explicitly select all discovered years for downloading")
-    args = parser.parse_args()
+    add_boolean_argument(parser, "--download", help="Download/extract selected ZIPs; otherwise list only")
+    add_boolean_argument(parser, "--all-years", help="Explicitly select all discovered years for downloading")
+    add_dry_run_argument(parser)
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if args.years and args.all_years:
         parser.error("choose --years or --all-years, not both")
     if args.download and not (args.years or args.all_years):
@@ -34,7 +41,7 @@ def main():
             datasets = [item for item in datasets if item["year"] in args.years]
         for item in datasets:
             print(json.dumps(item, ensure_ascii=False), flush=True)
-        if not args.download:
+        if not args.download or args.dry_run:
             return
         for item in datasets:
             destination = exports_root / f"edrsr-data-{item['year']}"

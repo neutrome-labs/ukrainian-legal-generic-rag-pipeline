@@ -78,6 +78,13 @@ class LegalDocumentPipeline:
         logger.info("Processing Constitution of Ukraine (Конституція України)")
         logger.info("=" * 60)
 
+        safe_nreg = CONSTITUTION_NREG.replace("/", "_")
+        with self._docs_lock:
+            if safe_nreg in self.processed_docs:
+                with self._stats_lock:
+                    self.stats['skipped'] += 1
+                return None
+
         # Fetch the constitution
         constitution = self.api_client.get_constitution()
         if not constitution:
@@ -291,7 +298,9 @@ class LegalDocumentPipeline:
         self,
         include_international: bool = False,
         limit: Optional[int] = None,
-        max_workers: int = 4
+        max_workers: int = 4,
+        include_domestic: bool = True,
+        exclude_codes: bool = False
     ) -> int:
         """
         Process all primary legislative acts with multithreading.
@@ -308,22 +317,24 @@ class LegalDocumentPipeline:
         logger.info("Processing Primary Legislative Acts")
         logger.info("=" * 60)
 
-        if limit == 0:
+        if limit == 0 or not (include_domestic or include_international):
             return 0
 
-        # Get list of primary acts
-        nregs = self.api_client.get_primary_acts_list(include_international)
-        inactive = set(self.api_client.get_inactive_acts_list())
-
-        # Filter out inactive if configured
+        nregs = self.api_client.get_primary_acts_list(
+            include_international=include_international, include_domestic=include_domestic
+        )
         if self.config.process_active_laws_only:
+            inactive = set(self.api_client.get_inactive_acts_list())
             nregs = [n for n in nregs if n.strip() not in inactive]
 
+        # Dedicated stages own the Constitution and, when disabled, major codes
+        # must not sneak back in via the domestic primary-acts list.
+        excluded = {CONSTITUTION_NREG}
+        if exclude_codes:
+            excluded.update(self.config.doc_types.priority_types.get('codes', []))
+        nregs = [n.strip() for n in nregs if n.strip() and n.strip() not in excluded]
         if limit is not None:
             nregs = nregs[:limit]
-
-        # Clean up nregs and filter out constitution
-        nregs = [n.strip() for n in nregs if n.strip() and n.strip() != CONSTITUTION_NREG]
 
         total = len(nregs)
         logger.info(f"Processing {total} primary acts with {max_workers} threads")
@@ -435,12 +446,14 @@ class LegalDocumentPipeline:
             if include_codes:
                 results['codes_processed'] = len(self.process_codes())
 
-            # Step 3: Process all primary laws
-            if include_laws:
+            # Step 3: Select domestic acts and treaties independently.
+            if include_laws or include_international:
                 results['laws_processed'] = self.process_primary_acts(
                     include_international=include_international,
                     limit=limit,
-                    max_workers=max_workers
+                    max_workers=max_workers,
+                    include_domestic=include_laws,
+                    exclude_codes=not include_codes
                 )
 
         except KeyboardInterrupt:

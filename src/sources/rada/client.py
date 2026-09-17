@@ -144,7 +144,9 @@ class RadaAPIClient:
 
         return response
 
-    def get_primary_acts_list(self, include_international: bool = False) -> List[str]:
+    def get_primary_acts_list(
+        self, include_international: bool = False, include_domestic: bool = True
+    ) -> List[str]:
         """
         Get list of primary legislative act registration numbers.
 
@@ -155,15 +157,16 @@ class RadaAPIClient:
         nregs = []
 
         # Main primary acts (excluding international treaties)
-        url = urljoin(self.api_config.base_url, self.api_config.primary_acts_list)
-        try:
-            response = self._make_request(url)
-            # API returns CP1251-encoded text, decode properly to UTF-8
-            text = response.content.decode('cp1251')
-            nregs.extend(text.strip().split('\n'))
-            logger.info(f"Loaded {len(nregs)} primary acts (domestic)")
-        except Exception as e:
-            logger.error(f"Failed to load primary acts list: {e}")
+        if include_domestic:
+            url = urljoin(self.api_config.base_url, self.api_config.primary_acts_list)
+            try:
+                response = self._make_request(url)
+                # API returns CP1251-encoded text, decode properly to UTF-8
+                text = response.content.decode('cp1251')
+                nregs.extend(text.strip().split('\n'))
+                logger.info(f"Loaded {len(nregs)} primary acts (domestic)")
+            except Exception as e:
+                logger.error(f"Failed to load primary acts list: {e}")
 
         if include_international:
             # International treaties

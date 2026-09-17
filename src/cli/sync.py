@@ -14,6 +14,7 @@ import logging
 import time
 from datetime import datetime
 
+from src.cli.common import add_boolean_argument, add_dry_run_argument, add_storage_arguments
 from src.config import load_config
 from src.pipelines.rada import LegalDocumentPipeline
 
@@ -23,7 +24,8 @@ logger = logging.getLogger(__name__)
 def sync_recent_updates(
     pages: int = 1,
     use_local: bool = False,
-    output_dir: str = "./output"
+    output_dir: str = "./output",
+    skip_existing: bool = False
 ) -> dict:
     """
     Sync recently updated documents to storage.
@@ -32,6 +34,7 @@ def sync_recent_updates(
         pages: Number of pages of recent updates to fetch
         use_local: Use local storage instead of R2
         output_dir: Output directory for local storage
+        skip_existing: Skip documents already in storage (may miss revisions)
 
     Returns:
         Statistics dictionary
@@ -44,7 +47,8 @@ def sync_recent_updates(
 
     pipeline = LegalDocumentPipeline(
         config=config,
-        use_local_storage=use_local
+        use_local_storage=use_local,
+        skip_existing=skip_existing
     )
 
     processed = pipeline.process_recent_updates(pages=pages)
@@ -65,7 +69,8 @@ def run_scheduled(
     interval_hours: int = 6,
     pages: int = 1,
     use_local: bool = False,
-    output_dir: str = "./output"
+    output_dir: str = "./output",
+    skip_existing: bool = False
 ):
     """
     Run sync on a schedule.
@@ -75,13 +80,15 @@ def run_scheduled(
         pages: Number of pages to fetch each time
         use_local: Use local storage
         output_dir: Output directory for local storage
+        skip_existing: Skip documents already in storage (may miss revisions)
     """
     logger.info(f"Starting scheduled sync (every {interval_hours} hours)")
 
     while True:
         try:
             stats = sync_recent_updates(
-                pages=pages, use_local=use_local, output_dir=output_dir
+                pages=pages, use_local=use_local, output_dir=output_dir,
+                skip_existing=skip_existing
             )
             logger.info(f"Scheduled sync complete: {stats}")
         except Exception as e:
@@ -93,7 +100,7 @@ def run_scheduled(
         time.sleep(sleep_seconds)
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(
         description="Sync recent Ukrainian legal document updates to R2"
     )
@@ -105,10 +112,11 @@ def main():
         help='Number of pages of recent updates to fetch (default: 1)'
     )
 
-    parser.add_argument(
-        '--local',
-        action='store_true',
-        help='Use local storage instead of R2'
+    add_storage_arguments(parser)
+    add_dry_run_argument(parser)
+    add_boolean_argument(
+        parser, '--skip-existing',
+        help='Skip documents already in storage (may miss revisions)'
     )
 
     parser.add_argument(
@@ -118,10 +126,9 @@ def main():
         help='Output directory for local storage'
     )
 
-    parser.add_argument(
-        '--schedule',
-        action='store_true',
-        help='Run on schedule (default: every 6 hours)'
+    add_boolean_argument(
+        parser, '--schedule',
+        help='Run on schedule (default interval: every 6 hours)'
     )
 
     parser.add_argument(
@@ -131,7 +138,26 @@ def main():
         help='Hours between scheduled syncs (default: 6)'
     )
 
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.pages < 1:
+        parser.error('--pages must be at least 1')
+    if args.interval < 1:
+        parser.error('--interval must be at least 1')
+
+    if args.dry_run:
+        print('DRY RUN - sync plan (no changes will be made)')
+        print(f"  Storage: {'local' if args.local else 'remote (R2)'}")
+        print(f'  Output directory: {args.output_dir}')
+        print(f'  Pages: {args.pages}')
+        print(f'  Skip existing: {args.skip_existing}')
+        print(f'  Schedule: {args.schedule}; interval: {args.interval} hours')
+        print('  No configuration, pipeline, or scheduler will be initialized.')
+        return
 
     logging.basicConfig(
         level=logging.INFO,
@@ -147,13 +173,15 @@ def main():
             interval_hours=args.interval,
             pages=args.pages,
             use_local=args.local,
-            output_dir=args.output_dir
+            output_dir=args.output_dir,
+            skip_existing=args.skip_existing
         )
     else:
         stats = sync_recent_updates(
             pages=args.pages,
             use_local=args.local,
-            output_dir=args.output_dir
+            output_dir=args.output_dir,
+            skip_existing=args.skip_existing
         )
         print(f"\nSync Statistics:")
         for key, value in stats.items():

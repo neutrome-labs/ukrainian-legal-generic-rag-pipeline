@@ -5,163 +5,101 @@ import json
 import logging
 import sys
 
+from src.cli.common import add_boolean_argument, add_dry_run_argument, add_storage_arguments
 from src.config import load_config
 from src.pipelines.rada import LegalDocumentPipeline
 
 logger = logging.getLogger(__name__)
 
 
-def main():
-    """Main entry point with CLI arguments"""
+def build_parser():
     parser = argparse.ArgumentParser(
         description="Ukrainian Legal Documents RAG Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Process only the Constitution (for testing)
-  python -m src.cli.rada --constitution-only
+  # Only the Constitution, locally
+  python -m src.cli.rada --local --no-include-codes --no-include-laws
 
-  # Process Constitution and Codes
-  python -m src.cli.rada --include-codes --limit 0
+  # Constitution and Codes
+  python -m src.cli.rada --no-include-laws --workers 8
 
-  # Full pipeline with limit
-  python -m src.cli.rada --limit 100
+  # Full pipeline including international treaties, to R2
+  python -m src.cli.rada --remote --include-international --limit 100
 
-  # Full pipeline including international treaties
-  python -m src.cli.rada --include-international
+  # Preview selected stages without downloads or writes
+  python -m src.cli.rada --dry-run
 
-  # Use local storage instead of R2
-  python -m src.cli.rada --local --limit 10
-        """
+  # Recent updates (same as src.cli.sync --pages 2)
+  python -m src.cli.rada --recent --pages 2
+"""
     )
+    for name, default, help_text in (
+        ("constitution", True, "Include the Constitution"),
+        ("codes", True, "Include major codes"),
+        ("laws", True, "Include domestic primary acts"),
+        ("international", False, "Include international treaties independently of domestic acts"),
+    ):
+        add_boolean_argument(parser, f"--include-{name}", default=default, help=help_text)
+    parser.add_argument("--limit", type=int, help="Maximum primary acts (domestic and international); 0 disables that stage")
+    parser.add_argument("--workers", type=int, default=4, help="Parallel download workers (default: 4)")
+    add_storage_arguments(parser)
+    parser.add_argument("--output-dir", default=None, help="Local output directory (default: OUTPUT_DIR or ./output)")
+    add_boolean_argument(parser, "--skip-existing", help="Skip documents already saved to storage")
+    add_boolean_argument(parser, "--active-only", default=True, help="Filter out inactive acts")
+    add_boolean_argument(parser, "--generate-index", default=True, help="Generate the document index after a full run")
+    add_boolean_argument(parser, "--recent", help="Process recent updates instead of the selected full-pipeline stages")
+    parser.add_argument("--pages", type=int, default=1, help="Recent update pages (default: 1; used with --recent)")
+    add_boolean_argument(parser, "--debug", help="Enable debug logging")
+    add_dry_run_argument(parser)
+    return parser
 
-    parser.add_argument(
-        '--constitution-only',
-        action='store_true',
-        help='Process only the Constitution'
-    )
 
-    parser.add_argument(
-        '--include-codes',
-        action='store_true',
-        default=True,
-        help='Include major codes (default: True)'
-    )
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.limit is not None and args.limit < 0:
+        parser.error("--limit must be non-negative")
+    if args.workers < 1:
+        parser.error("--workers must be positive")
+    if args.pages < 1:
+        parser.error("--pages must be positive")
 
-    parser.add_argument(
-        '--include-international',
-        action='store_true',
-        help='Include international treaties'
-    )
-
-    parser.add_argument(
-        '--limit',
-        type=int,
-        default=None,
-        help='Limit number of primary acts to process'
-    )
-
-    parser.add_argument(
-        '--threads',
-        type=int,
-        default=4,
-        metavar='N',
-        help='Number of parallel download threads (default: 4)'
-    )
-
-    parser.add_argument(
-        '--local',
-        action='store_true',
-        help='Use local storage instead of R2'
-    )
-
-    parser.add_argument(
-        '--output-dir',
-        type=str,
-        default='./output',
-        help='Output directory for local storage'
-    )
-
-    parser.add_argument(
-        '--skip-existing',
-        action='store_true',
-        help='Skip documents already uploaded to R2/storage'
-    )
-
-    parser.add_argument(
-        '--recent-only',
-        type=int,
-        default=None,
-        metavar='PAGES',
-        help='Process only recent updates (number of pages)'
-    )
-
-    parser.add_argument(
-        '--debug',
-        action='store_true',
-        help='Enable debug logging'
-    )
-
-    parser.add_argument(
-        '--test',
-        action='store_true',
-        help='Run quick test with limited documents'
-    )
-
-    args = parser.parse_args()
+    # A plan only: no pipeline, cache, log file or storage initialization.
+    if args.dry_run:
+        print(json.dumps({"dry_run": True, "mode": "recent" if args.recent else "full",
+                          "storage": "local" if args.local else "remote", "options": vars(args)}, indent=2))
+        return
 
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler('pipeline.log', encoding='utf-8')
-        ]
+        handlers=[logging.StreamHandler(sys.stdout), logging.FileHandler('pipeline.log', encoding='utf-8')]
     )
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # Load configuration
     config = load_config()
-    if args.output_dir:
+    if args.output_dir is not None:
         config.output_dir = args.output_dir
-
-    # Create pipeline
-    pipeline = LegalDocumentPipeline(
-        config=config,
-        use_local_storage=args.local,
-        skip_existing=args.skip_existing
-    )
-
-    # Run appropriate mode
-    if args.test:
-        logger.info("Running quick test...")
-        pipeline.process_constitution()
-        logger.info("Test complete!")
+    config.process_active_laws_only = args.active_only
+    pipeline = LegalDocumentPipeline(config=config, use_local_storage=args.local,
+                                     skip_existing=args.skip_existing)
+    if args.recent:
+        pipeline.process_recent_updates(pages=args.pages)
         return
 
-    if args.constitution_only:
-        pipeline.process_constitution()
-        return
-
-    if args.recent_only:
-        pipeline.process_recent_updates(pages=args.recent_only)
-        return
-
-    # Full pipeline
     results = pipeline.run_full_pipeline(
-        include_constitution=True,
+        include_constitution=args.include_constitution,
         include_codes=args.include_codes,
-        include_laws=True,
+        include_laws=args.include_laws,
         include_international=args.include_international,
         limit=args.limit,
-        max_workers=args.threads
+        max_workers=args.workers
     )
+    if args.generate_index:
+        pipeline.generate_index()
 
-    # Generate index
-    pipeline.generate_index()
-
-    # Output summary
     print("\n" + "=" * 60)
     print("PIPELINE SUMMARY")
     print("=" * 60)

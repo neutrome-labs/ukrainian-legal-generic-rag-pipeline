@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Tuple
 
+from src.cli.common import add_boolean_argument, add_dry_run_argument
 from src.config import load_config
 from src.storage import R2Uploader, UploadResult
 
@@ -48,7 +49,8 @@ def upload_directory(
     uploader: R2Uploader,
     local_dir: Path,
     max_workers: int = 10,
-    dry_run: bool = False
+    dry_run: bool = False,
+    skip_existing: bool = True
 ) -> Tuple[int, int, int]:
     """
     Upload all files from local directory to R2.
@@ -80,17 +82,18 @@ def upload_directory(
     skipped = 0
     failed = 0
 
-    # Check what already exists in R2
-    logger.info("Checking existing files in R2...")
+    # Only query existing keys when skipping is requested.
     existing_keys = set()
-    try:
-        paginator = uploader.client.get_paginator('list_objects_v2')
-        for page in paginator.paginate(Bucket=uploader.config.bucket_name):
-            for obj in page.get('Contents', []):
-                existing_keys.add(obj['Key'])
-        logger.info(f"Found {len(existing_keys)} existing files in R2")
-    except Exception as e:
-        logger.warning(f"Could not list existing files: {e}")
+    if skip_existing:
+        logger.info("Checking existing files in R2...")
+        try:
+            paginator = uploader.client.get_paginator('list_objects_v2')
+            for page in paginator.paginate(Bucket=uploader.config.bucket_name):
+                for obj in page.get('Contents', []):
+                    existing_keys.add(obj['Key'])
+            logger.info(f"Found {len(existing_keys)} existing files in R2")
+        except Exception as e:
+            logger.warning(f"Could not list existing files: {e}")
 
     # Filter out already uploaded files
     files_to_upload_new = [(lp, k) for lp, k in files_to_upload if k not in existing_keys]
@@ -103,7 +106,7 @@ def upload_directory(
         logger.info("All files already uploaded!")
         return 0, skipped, 0
 
-    logger.info(f"Uploading {len(files_to_upload_new)} new files...")
+    logger.info(f"Uploading {len(files_to_upload_new)} files...")
 
     # Upload in parallel
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -130,7 +133,7 @@ def upload_directory(
     return uploaded, skipped, failed
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(
         description="Upload existing local files to Cloudflare R2"
     )
@@ -147,18 +150,43 @@ def main():
         help="Number of parallel upload workers (default: 10)"
     )
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be uploaded without actually uploading"
-    )
-    parser.add_argument(
-        "--skip-existing",
+        "--remote",
         action="store_true",
         default=True,
-        help="Skip files that already exist in R2 (default: True)"
+        help="Upload to remote storage (R2; the only destination)"
     )
+    add_dry_run_argument(parser)
+    add_boolean_argument(
+        parser, "--skip-existing", default=True,
+        help="Skip files that already exist in R2"
+    )
+    return parser
 
-    args = parser.parse_args()
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.workers < 1:
+        parser.error('--workers must be at least 1')
+
+    if args.dry_run:
+        print('DRY RUN - upload plan (no changes will be made)')
+        print(f'  Input directory: {args.input_dir}')
+        print('  Storage: remote (R2)')
+        print(f'  Workers: {args.workers}')
+        print(f'  Skip existing: {args.skip_existing}')
+        input_dir = Path(args.input_dir)
+        if not input_dir.is_dir():
+            parser.exit(1, f"Input directory not found: {input_dir}\n")
+        total = 0
+        for root, _, files in os.walk(input_dir):
+            for filename in files:
+                if total < 10:
+                    print(f'  Would upload: {(Path(root) / filename).relative_to(input_dir)}')
+                total += 1
+        print(f'  Files considered: {total} (showing at most 10)')
+        print('  No configuration or remote storage will be accessed; existing keys are not checked.')
+        return
 
     logging.basicConfig(
         level=logging.INFO,
@@ -184,7 +212,8 @@ def main():
         uploader,
         input_dir,
         max_workers=args.workers,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        skip_existing=args.skip_existing
     )
 
     # Summary

@@ -5,43 +5,99 @@
 ## Швидкий старт
 
 ```bash
-cp .env.example .env   # заповніть R2_* змінні
+cp .env.example .env   # заповніть R2_* змінні для віддаленого запису
 
-# Тест: лише Конституція, локально без R2
-python -m src.cli.rada --test --local
+# Лише Конституція, локально без R2
+python -m src.cli.rada --local --no-include-codes --no-include-laws
+
+# План повного запуску: без мережі та записів
+python -m src.cli.rada --dry-run
 
 # Повний пайплайн з лімітом; R2
-python -m src.cli.rada --limit 100
+python -m src.cli.rada --remote --limit 100
 
-# Тільки Конституція та Кодекси, 8 потоків
-python -m src.cli.rada --include-codes --limit 0 --threads 8
+# Тільки Конституція та Кодекси, 8 працівників
+python -m src.cli.rada --no-include-laws --workers 8
 
-# Включно з міжнародними договорами
-python -m src.cli.rada --include-international
+# Міжнародні договори незалежні від первинних внутрішніх актів
+python -m src.cli.rada --no-include-laws --include-international
 
 # Недавні оновлення (інкрементально), локально
+python -m src.cli.rada --recent --pages 2 --local
 python -m src.cli.sync --pages 1 --local
+python -m src.cli.sync --schedule --interval 6 --remote
 
-# Завантажити раніше створені локальні файли в R2
-python -m src.cli.upload --input-dir ./cache/edrsr/documents --workers 20
+# Перелік локальних файлів без доступу до R2, потім завантаження
+python -m src.cli.upload --input-dir ./cache/edrsr/documents --dry-run
+python -m src.cli.upload --input-dir ./cache/edrsr/documents --remote --workers 20
 ```
+
+## Спільні правила CLI
+
+Булеві параметри використовують `BooleanOptionalAction`: `--foo` вмикає, `--no-foo` вимикає; значення `true`/`false` після прапорця не передаються. Виняток — вибір сховища: `--local` і `--remote` взаємовиключні; `--no-local` та `--no-remote` не існують. `--output-dir` сам по собі не перемикає сховище.
+
+`rada` та `sync` за замовчуванням пишуть у R2 (`--remote`). `upload` підтримує лише R2: приймає `--remote`, але не `--local`. У всіх команд `--dry-run` / `--no-dry-run` має default `false`. Для `rada` та `sync` dry-run лише друкує план: без мережі, створення кешу, лог-файлів чи записів у сховище; навіть із `--schedule` цикл не запускається. Для `upload` dry-run перелічує локальні файли без доступу до R2, тому не перевіряє, які ключі вже існують.
 
 ## Параметри CLI (`python -m src.cli.rada`)
 
-| Параметр | Дія |
-|----------|-----|
-| `--test` | Швидкий тест: лише Конституція |
-| `--constitution-only` | Лише Конституція |
-| `--include-codes` (default: true) | Включити основні кодекси |
-| `--include-international` | Включити міжнародні договори |
-| `--limit N` | Обмежити кількість первинних актів (`0` = жодного) |
-| `--threads N` | Потоки завантаження (default: 4) |
-| `--local` / `--output-dir DIR` | Локальне збереження замість R2 |
-| `--skip-existing` | Пропустити вже завантажені (resume) |
-| `--recent-only PAGES` | Лише нещодавно оновлені документи |
-| `--debug` | Детальне логування |
+| Параметр | За замовчуванням | Дія |
+|----------|-----------------|-----|
+| `-h`, `--help` | — | Довідка й вихід |
+| `--include-constitution` / `--no-include-constitution` | `true` | Окремий етап Конституції |
+| `--include-codes` / `--no-include-codes` | `true` | Окремий етап основних кодексів |
+| `--include-laws` / `--no-include-laws` | `true` | Етап первинних внутрішніх актів |
+| `--include-international` / `--no-include-international` | `false` | Міжнародні договори; незалежно від `--include-laws` |
+| `--limit N` | без ліміту | Максимум первинних актів (внутрішніх і міжнародних); `0` вимикає цей етап |
+| `--workers N` | `4` | Кількість паралельних працівників завантаження |
+| `--local` / `--remote` | `--remote` | Взаємовиключний вибір сховища |
+| `--output-dir DIR` | `OUTPUT_DIR` або `./output` | Корінь локального виводу |
+| `--skip-existing` / `--no-skip-existing` | `false` | Пропуск уже збережених документів (resume) |
+| `--active-only` / `--no-active-only` | `true` | Фільтрування нечинних актів |
+| `--generate-index` / `--no-generate-index` | `true` | Генерація індексу після повного запуску |
+| `--recent` / `--no-recent` | `false` | Нещодавні оновлення замість повного пайплайна |
+| `--pages N` | `1` | Кількість сторінок для `--recent` |
+| `--debug` / `--no-debug` | `false` | Детальне логування |
+| `--dry-run` / `--no-dry-run` | `false` | Лише план, без мережі та записів |
 
-`--recent-only` — синхронізація змін; те саме вміє `python -m src.cli.sync` (є `--schedule` для періодичного запуску).
+`--recent` обходить усі перемикачі `--include-*` повного пайплайна та `--generate-index`; кількість сторінок задає `--pages`. Таку синхронізацію також виконує `src.cli.sync`. Перемикач `--no-include-codes` вимикає окремий етап кодексів і виключає налаштований список основних кодексів зі списку первинних актів. Для лише Конституції вимкніть і кодекси, і закони; міжнародні договори за замовчуванням вимкнені.
+
+## Параметри синхронізації (`python -m src.cli.sync`)
+
+| Параметр | За замовчуванням | Дія |
+|----------|-----------------|-----|
+| `-h`, `--help` | — | Довідка й вихід |
+| `--pages N` | `1` | Кількість сторінок недавніх оновлень |
+| `--local` / `--remote` | `--remote` | Взаємовиключний вибір сховища |
+| `--output-dir DIR` | `./output` | Корінь локального виводу |
+| `--schedule` / `--no-schedule` | `false` | Повторювати синхронізацію за розкладом |
+| `--interval N` | `6` | Інтервал між запусками в годинах із `--schedule` |
+| `--skip-existing` / `--no-skip-existing` | `false` | Пропуск збережених документів; може пропустити нові редакції |
+| `--dry-run` / `--no-dry-run` | `false` | Лише план, без мережі та записів |
+
+## Параметри завантаження (`python -m src.cli.upload`)
+
+| Параметр | За замовчуванням | Дія |
+|----------|-----------------|-----|
+| `-h`, `--help` | — | Довідка й вихід |
+| `--input-dir DIR` | `./output` | Локальний каталог файлів для рекурсивного завантаження |
+| `--workers N` | `10` | Кількість паралельних працівників |
+| `--remote` | R2 | Явний вибір єдиного підтримуваного сховища; `--local` не підтримується |
+| `--skip-existing` / `--no-skip-existing` | `true` | Пропуск ключів, які вже є в R2; вимкнення дозволяє їх перезапис |
+| `--dry-run` / `--no-dry-run` | `false` | Перелік локальних файлів без доступу до R2 та записів |
+
+## Міграція CLI
+
+Старі назви вилучено без сумісних псевдонімів. Оновіть скрипти:
+
+| Раніше | Тепер |
+|--------|-------|
+| `rada --test` або `rada --constitution-only` | `rada --include-constitution --no-include-codes --no-include-laws` (міжнародні договори за замовчуванням вимкнені) |
+| `rada --threads 8` | `rada --workers 8` |
+| `rada --recent-only 2` | `rada --recent --pages 2` |
+| `rada --include-codes --limit 0` для Конституції та кодексів | `rada --no-include-laws` (за стандартних інших перемикачів) |
+| Булевий прапорець лише для ввімкнення | Парні `--foo` / `--no-foo` |
+
+Для явного перезапису наявних ключів через `upload` використовуйте `--no-skip-existing`: цей параметр тепер дійсно керує пропуском, default лишається `true`. Для `rada` та `sync` default `--skip-existing` — `false`.
 
 ## Конфігурація
 
@@ -65,7 +121,7 @@ ukrainian-legal-docs/
     └── document_index.json
 ```
 
-Локальний режим дає тугу саму структуру в `--output-dir`.
+Локальний режим дає ту саму структуру в `--output-dir`.
 
 ## Формат документа
 
