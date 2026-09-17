@@ -1,41 +1,15 @@
 """Convert Ukrainian legal documents to one Markdown file per source document."""
 
-import hashlib
 import logging
 import re
-from dataclasses import dataclass, field
 from html import unescape
 from typing import Any, Dict, Optional
 
 from bs4 import BeautifulSoup
 
+from ...core.models import LegalDocument
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class LegalDocument:
-    """The complete source document uploaded for Cloudflare AI Search to chunk."""
-
-    doc_id: str
-    content: str
-    title: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def content_hash(self) -> str:
-        return hashlib.md5(self.to_markdown().encode("utf-8")).hexdigest()[:12]
-
-    def to_markdown(self) -> str:
-        frontmatter = ["---", f"doc_id: {self.doc_id}", f'title: "{self.title}"']
-        for key, value in self.metadata.items():
-            if value is None:
-                continue
-            if isinstance(value, str):
-                frontmatter.append(f'{key}: "{value}"')
-            else:
-                frontmatter.append(f"{key}: {value}")
-        frontmatter.extend(["---", ""])
-        return "\n".join(frontmatter) + self.content
 
 
 class MarkdownConverter:

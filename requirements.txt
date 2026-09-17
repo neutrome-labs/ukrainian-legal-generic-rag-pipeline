@@ -6,6 +6,7 @@ requests>=2.28.0
 # HTML parsing
 beautifulsoup4>=4.11.0
 lxml>=4.9.0
+striprtf>=0.0.29  # Official ЄДРСР document files
 
 # AWS S3 / Cloudflare R2
 boto3>=1.26.0
@@ -20,6 +21,7 @@ aiobotocore>=2.4.0
 
 # Development/testing
 pytest>=7.0.0
+PyYAML>=6.0.0  # Frontmatter round-trip tests
 pytest-asyncio>=0.21.0
 pytest-cov>=4.0.0
 

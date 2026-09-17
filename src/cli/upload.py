@@ -4,21 +4,16 @@ Each Markdown file is a complete source document for Cloudflare AI Search.
 """
 
 import argparse
-import json
 import logging
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 from src.config import load_config
-from src.r2_uploader import R2Uploader, UploadResult
+from src.storage import R2Uploader, UploadResult
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
@@ -164,6 +159,11 @@ def main():
     )
 
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
     input_dir = Path(args.input_dir)
     if not input_dir.exists():

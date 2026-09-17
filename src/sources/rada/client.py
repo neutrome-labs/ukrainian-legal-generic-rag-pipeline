@@ -15,7 +15,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from .config import PipelineConfig, RadaAPIConfig, load_config
+from ...config import PipelineConfig, RadaAPIConfig, load_config
 
 logger = logging.getLogger(__name__)
 
@@ -357,7 +357,7 @@ class RadaAPIClient:
 
     def get_constitution(self) -> Optional[LawDocument]:
         """Get the Constitution of Ukraine"""
-        from .config import CONSTITUTION_NREG
+        from ...config import CONSTITUTION_NREG
 
         logger.info("Fetching Constitution of Ukraine...")
         doc_data = self.get_document_full(CONSTITUTION_NREG)

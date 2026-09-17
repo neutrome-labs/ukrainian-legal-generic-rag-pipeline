@@ -10,9 +10,10 @@ from typing import Optional
 
 # Load .env file if it exists
 from dotenv import load_dotenv
-env_path = Path(__file__).parent / '.env'
-if env_path.exists():
-    load_dotenv(env_path)
+# Root configuration takes priority; retain src/.env for existing installations.
+for env_path in (Path(__file__).parent.parent / '.env', Path(__file__).parent / '.env'):
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
 
 @dataclass
 class RadaAPIConfig:
@@ -160,11 +161,11 @@ class PipelineConfig:
     process_active_laws_only: bool = True
 
     # Local cache directory
-    cache_dir: str = "./cache"
-    output_dir: str = "./output"
+    cache_dir: str = field(default_factory=lambda: os.getenv("CACHE_DIR", "./cache"))
+    output_dir: str = field(default_factory=lambda: os.getenv("OUTPUT_DIR", "./output"))
 
     # Logging
-    log_level: str = "INFO"
+    log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
     log_file: str = "pipeline.log"
 
 

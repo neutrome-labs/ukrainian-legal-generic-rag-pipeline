@@ -1,195 +1,53 @@
 # 🇺🇦 Ukrainian Legal RAG Pipeline
 
-Pipeline для завантаження українського законодавства як повних Markdown-документів до Cloudflare R2 для використання з Cloudflare AI Search.
+Завантажує українські правові документи як повні Markdown-файли з YAML-метаданими до Cloudflare R2 (або локального кешу) для індексації в Cloudflare AI Search.
 
-## 📋 Огляд
+## Джерела
 
-Цей проект автоматизує:
-1. **Завантаження** законодавства з [data.rada.gov.ua](https://data.rada.gov.ua)
-2. **Конвертацію** кожного джерельного документа у чистий Markdown з метаданими
-3. **Завантаження** до Cloudflare R2 (S3-сумісне сховище)
-4. **Структуровану організацію** документів для RAG-систем
+| Джерело | Що дає | Документація |
+|---------|--------|--------------|
+| [Верховна Рада](https://data.rada.gov.ua) | Конституція, кодекси, закони, міжнародні договори | [docs/rada.md](docs/rada.md) |
+| [ЄДРСР](https://reyestr.court.gov.ua/) через [відкриті дані ДСА](https://data.gov.ua) | Судові рішення (річні експорти 2006–2026) | [docs/edrsr-integration.md](docs/edrsr-integration.md) |
 
-## 🗂️ Джерела даних
-
-### Портал відкритих даних Верховної Ради України
-
-| Набір даних | Опис | Кількість |
-|-------------|------|-----------|
-| **Первинні законодавчі акти** | Закони, кодекси (крім тих, що вносять зміни) | ~3000+ документів |
-| **Конституція України** | Основний Закон | 1 документ |
-| **Кодекси** | Цивільний, Кримінальний, Податковий та інші | 15+ кодексів |
-| **Міжнародні договори** | Ратифіковані Україною договори | ~2000+ документів |
-
-### API Endpoints
-
-- Тексти документів: `https://data.rada.gov.ua/laws/show/{nreg}.txt`
-- JSON картки: `https://data.rada.gov.ua/laws/show/{nreg}.json`
-- Списки актів: `https://data.rada.gov.ua/ogd/zak/laws/data/csv/perv1.txt`
-
-## 🚀 Швидкий старт
-
-### 1. Встановлення
+## Швидкий старт
 
 ```bash
-# Клонувати репозиторій
-cd semantyka-rag-legal-generic-pipeline
-
-# Створити віртуальне середовище
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# або: venv\Scripts\activate  # Windows
-
-# Встановити залежності
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env   # заповніть ключі R2 (див. .env.example)
 ```
-
-### 2. Налаштування R2
 
 ```bash
-# Скопіювати шаблон конфігурації
-cp .env.example .env
+# Законодавство Ради: тестовий запуск (Конституція, локально)
+python -m src.cli.rada --test --local
 
-# Редагувати .env та додати свої ключі R2
-nano .env
+# Судові рішення: завантажити річний експорт і зробити preview
+python -m src.cli.edrsr_datasets --years 2025 --download
+python -m src.cli.edrsr 2025 --preview --limit 10
 ```
 
-Для отримання ключів R2:
-1. Увійдіть до [Cloudflare Dashboard](https://dash.cloudflare.com)
-2. Перейдіть до R2 → Overview
-3. Створіть API Token з правами Read/Write
+## Структура
 
-### 3. Запуск
+```text
+src/
+├── core/          # LegalDocument та контракт DocumentSource
+├── sources/       # rada (законодавство), edrsr (судова практика)
+├── pipelines/     # оркестрація та спільний імпорт-раннер
+├── storage/       # локальний та R2 адаптери (namespaces на джерело)
+└── cli/           # rada, sync, upload, edrsr, edrsr_datasets
+docs/              # інтеграції та оцінка джерел
+tests/             # офлайн-тести
+```
+
+Нове джерело реалізує `DocumentSource` і повертає `LegalDocument`;
+деталі — у [docs/edrsr-integration.md](docs/edrsr-integration.md).
+
+## Тести
 
 ```bash
-# Тестовий запуск (лише Конституція, локальне збереження)
-python pipeline.py --test --local
-
-# Повний пайплайн з лімітом
-python pipeline.py --limit 100
-
-# Тільки Конституція та Кодекси
-python pipeline.py --constitution-only
-python pipeline.py --include-codes --limit 0 --threads 8
-
-# Повний пайплайн включно з міжнародними договорами
-python pipeline.py --include-international
-
-# Завантажити існуючі локально в R2
-python updaload_existing.py --workers 20
+python -m pytest -q
 ```
 
-## 📁 Структура сховища R2
+## Ліцензія
 
-```
-ukrainian-legal-docs/
-├── constitution/
-│   └── 254к_96-вр.md
-├── codes/
-│   ├── 435-15/              # Цивільний кодекс
-│   ├── 435-15.md             # Цивільний кодекс
-│   └── 2341-14.md            # Кримінальний кодекс
-│   └── ...
-├── laws/
-│   ├── 2939-17.md            # Закон про доступ до інформації
-│   └── ...
-└── _metadata/
-    └── document_index.json
-```
-
-## 📄 Формат Markdown-документів
-
-Кожен вихідний документ містить YAML frontmatter з метаданими. Пайплайн не ділить текст на фрагменти: Cloudflare AI Search виконує chunking під час індексації.
-
-```markdown
----
-doc_id: 254к_96-вр
-title: "Конституція України"
-source: data.rada.gov.ua
-language: uk
----
-
-## Стаття 1
-
-Україна є суверенна і незалежна, демократична, соціальна, правова держава.
-```
-
-## ⚙️ Конфігурація
-
-### Змінні середовища
-
-| Змінна | Опис | Обов'язково |
-|--------|------|-------------|
-| `R2_ENDPOINT_URL` | URL Cloudflare R2 | Так |
-| `R2_ACCESS_KEY_ID` | Ключ доступу R2 | Так |
-| `R2_SECRET_ACCESS_KEY` | Секретний ключ R2 | Так |
-| `R2_BUCKET_NAME` | Назва bucket | Так |
-| `RADA_API_TOKEN` | Токен API Ради | Ні |
-
-### Параметри CLI
-
-```
---constitution-only   Обробити лише Конституцію
---include-codes       Включити основні Кодекси
---include-international  Включити міжнародні договори
---limit N             Обмежити кількість документів
---local               Зберігати локально (без R2)
---output-dir DIR      Директорія для локального збереження
---recent-only N       Обробити лише нещодавні оновлення
---debug               Увімкнути детальне логування
---test                Швидкий тест (лише Конституція)
-```
-
-## 🔧 Модулі
-
-| Модуль | Призначення |
-|--------|-------------|
-| `config.py` | Конфігурація пайплайну |
-| `rada_api_client.py` | Клієнт API data.rada.gov.ua |
-| `markdown_converter.py` | Конвертація HTML → Markdown |
-| `r2_uploader.py` | Завантаження до R2/локально |
-| `pipeline.py` | Головний оркестратор |
-
-## 📊 Рейт-ліміти API
-
-API data.rada.gov.ua має обмеження:
-- 60 запитів/хвилина
-- 100,000 запитів/день
-- 200 MB/день
-
-Пайплайн автоматично додає затримку 6 секунд між запитами.
-
-## 🔗 Інтеграція з AutoRAG
-
-Після завантаження до R2, підключіть bucket до AutoRAG:
-
-1. Налаштуйте AutoRAG на читання з вашого R2 bucket
-2. Markdown файли автоматично індексуються
-3. Метадані у frontmatter використовуються для фільтрації
-
-### Приклад запиту до AutoRAG
-
-```
-Які права громадянина гарантує Конституція України?
-```
-
-AutoRAG знайде релевантні статті Конституції та надасть відповідь з посиланнями.
-
-## 📈 Статистика
-
-Типовий повний пайплайн:
-- **Конституція**: 1 документ
-- **Кодекси**: 1 документ на кодекс
-- **Первинні закони**: 1 документ на акт
-- **Час обробки**: 8-12 годин (з рейт-лімітами)
-
-## 🤝 Ліцензія
-
-Дані Верховної Ради України доступні під ліцензією [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.uk).
-
-Код проекту: MIT License
-
-## 📞 Контакти
-
-- Портал відкритих даних: [data.rada.gov.ua](https://data.rada.gov.ua)
-- Законодавство України: [zakon.rada.gov.ua](https://zakon.rada.gov.ua)
+Дані: CC BY 4.0 (Верховна Рада України, ДСА України). Код: MIT.

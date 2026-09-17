@@ -41,6 +41,7 @@ env/
 output/
 cache/
 test_output/
+data/
 
 # Logs
 *.log

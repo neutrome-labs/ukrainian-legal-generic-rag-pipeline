@@ -3,32 +3,20 @@ Incremental sync script for Ukrainian Legal Documents.
 Fetches recently updated documents and syncs them to R2.
 
 Usage:
-  python sync_updates.py                    # Sync last 24 hours of updates
-  python sync_updates.py --pages 5          # Sync 5 pages of recent updates
-  python sync_updates.py --local            # Save locally instead of R2
-  python sync_updates.py --schedule         # Run on schedule (every 6 hours)
+  python -m src.cli.sync                    # Sync last 24 hours of updates
+  python -m src.cli.sync --pages 5          # Sync 5 pages of recent updates
+  python -m src.cli.sync --local            # Save locally instead of R2
+  python -m src.cli.sync --schedule         # Run on schedule (every 6 hours)
 """
 
 import argparse
 import logging
 import time
 from datetime import datetime
-from pathlib import Path
 
 from src.config import load_config
-from src.rada_api_client import RadaAPIClient
-from src.markdown_converter import MarkdownConverter
-from src.r2_uploader import get_uploader
-from pipeline import LegalDocumentPipeline
+from src.pipelines.rada import LegalDocumentPipeline
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('sync.log', encoding='utf-8')
-    ]
-)
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +61,12 @@ def sync_recent_updates(
     return stats
 
 
-def run_scheduled(interval_hours: int = 6, pages: int = 1, use_local: bool = False):
+def run_scheduled(
+    interval_hours: int = 6,
+    pages: int = 1,
+    use_local: bool = False,
+    output_dir: str = "./output"
+):
     """
     Run sync on a schedule.
 
@@ -81,12 +74,15 @@ def run_scheduled(interval_hours: int = 6, pages: int = 1, use_local: bool = Fal
         interval_hours: Hours between syncs
         pages: Number of pages to fetch each time
         use_local: Use local storage
+        output_dir: Output directory for local storage
     """
     logger.info(f"Starting scheduled sync (every {interval_hours} hours)")
 
     while True:
         try:
-            stats = sync_recent_updates(pages=pages, use_local=use_local)
+            stats = sync_recent_updates(
+                pages=pages, use_local=use_local, output_dir=output_dir
+            )
             logger.info(f"Scheduled sync complete: {stats}")
         except Exception as e:
             logger.error(f"Scheduled sync failed: {e}", exc_info=True)
@@ -137,11 +133,21 @@ def main():
 
     args = parser.parse_args()
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('sync.log', encoding='utf-8')
+        ]
+    )
+
     if args.schedule:
         run_scheduled(
             interval_hours=args.interval,
             pages=args.pages,
-            use_local=args.local
+            use_local=args.local,
+            output_dir=args.output_dir
         )
     else:
         stats = sync_recent_updates(
